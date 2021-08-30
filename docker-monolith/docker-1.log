@@ -1,0 +1,13 @@
+REPOSITORY                                         TAG                  IMAGE ID       CREATED              SIZE
+ovvenger/ubuntu-tmp-file                           latest               49a497d034a6   About a minute ago   63.1MB
+ubuntu                                             18.04                39a8cfeef173   4 weeks ago          63.1MB
+hello-world                                        latest               d1165f221234   5 months ago         13.3kB
+ubuntu                                             latest               f63181f19b2f   7 months ago         72.9MB
+alpine                                             3.9                  78a2ce922f86   16 months ago        5.55MB
+
+docker image - это `read-only` шаблон, на основании которого можно создать и запустить контейнер.
+При изменении docker образа будет создан новый образ, за счёт добевленя к предыдущему образу нового `read-only` слоя с изменениями.
+
+docker container - это запущенный образ с добавленным `write` слоем, поэтому при запуске контейнера допускается добавление параметров,
+на основе которых настраиваются параметры в изменяемом слое. При изменении чего-либо в контейнере изменяется только `write` слой.
+Образ при это изменён не будет.
