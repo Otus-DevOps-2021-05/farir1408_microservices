@@ -126,7 +126,7 @@ docker-machine create \
 
 * Проверить, что docker host успешно создан
 ```editorconfig
-docker-machne ls
+docker-machine ls
 ```
 
 * Переключить docker на работу с docker host
@@ -252,6 +252,285 @@ $ docker push farir/otus-reddit:1.0
 * Для переключения на локальное окружение
 ```editorconfig
 $ docker - eval $(docker-machine env --unset)
+```
+
+</details>
+
+## HW-14 (Lecture 18)
+#### branch: `docker-3`
+- [X] Разбить приложение на несколько компонентов
+- [X] Запустить микросервисное приложение
+- [X] Оптимизировать сборку образа
+- [X] Создать docker-volume для хранения данных в бд
+- [X] Дополнительное задание: Сборка образа на основе Alpine Linux
+
+<details><summary>Решение</summary>
+
+#### Разбить приложение на несколько компонентов
+
+* Подключиться к ранее созданному docker-host
+```editorconfig
+$ eval $(docker-machine env docker-host)
+```
+
+* Скачать [архив с приложением](https://github.com/express42/reddit/archive/microservices.zip)
+Разархивировать его в директорию `scr`
+  
+* Структура директории `src`
+```editorconfig
+src
+├── README.md
+├── comment
+│   ├── Gemfile
+│   ├── Gemfile.lock
+│   ├── VERSION
+│   ├── comment_app.rb
+│   ├── config.ru
+│   ├── docker_build.sh
+│   └── helpers.rb
+├── post-py
+│   ├── VERSION
+│   ├── docker_build.sh
+│   ├── helpers.py
+│   ├── post_app.py
+│   └── requirements.txt
+└── ui
+    ├── Gemfile
+    ├── Gemfile.lock
+    ├── VERSION
+    ├── config.ru
+    ├── docker_build.sh
+    ├── helpers.rb
+    ├── middleware.rb
+    ├── ui_app.rb
+    └── views
+        ├── create.haml
+        ├── index.haml
+        ├── layout.haml
+        └── show.haml
+```
+
+Где:
+1) `post-py` - сервис отвечающий за написание постов
+2) `comment` - сервис отвечающий за написание комментариев
+3) `ui` - веб-интерфейс, работающий с другими сервисами
+
+Для работы также понадобится mongodb
+
+* Создать dockerfile для каждого сервиса
+
+Сервис `post-py`
+```dockerfile
+FROM python:3.6.0-alpine
+
+WORKDIR /app
+ADD . /app
+
+RUN apk --no-cache --update add build-base && \
+    pip install -r /app/requirements.txt && \
+    apk del build-base
+
+ENV POST_DATABASE_HOST post_db
+ENV POST_DATABASE posts
+
+ENTRYPOINT ["python3", "post_app.py"]
+```
+
+Сервис `comment`
+```dockerfile
+FROM ruby:2.2
+RUN apt-get update -qq && apt-get install -y build-essential
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+WORKDIR $APP_HOME
+
+ADD Gemfile* $APP_HOME/
+RUN bundle install
+ADD . $APP_HOME
+
+ENV COMMENT_DATABASE_HOST comment_db
+ENV COMMENT_DATABASE comments
+
+CMD ["puma"]
+```
+
+Сервис `ui`
+```dockerfile
+FROM ruby:2.2
+RUN apt-get update -qq && apt-get install -y build-essential
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+
+WORKDIR $APP_HOME
+ADD Gemfile* $APP_HOME/
+RUN bundle install
+ADD . $APP_HOME
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+#### Сборка приложения
+
+* Скачать последнюю версию образа mongodb (в docker-host)
+```editorconfig
+$ docker pull mongo:latest
+```
+
+* Собрать контейнер с приложением `post-py`
+```editorconfig
+$ docker build -t farir/post:1.0 ./post-py
+```
+
+* Собрать контейнер с приложением `comment`
+```editorconfig
+$ docker build -t farir/comment:1.0 ./comment
+```
+
+* Собрать контейнер с приложением `ui`
+```editorconfig
+$ docker build -t farir/ui:1.0 ./ui
+```
+
+Сборка ui началась не с первого шага так как начальный образ `ruby` был уже загружен для создания образа `comment`
+```editorconfig
+Step 1/13 : FROM ruby:2.2
+ ---> 6c8e6f9667b2
+```
+
+#### Запустить микросервисное приложение
+
+* Создать docker сеть для контейнеров
+```editorconfig
+$ docker network create reddit
+```
+
+* Запустить приложения
+```editorconfig
+$ docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+$ docker run -d --network=reddit --network-alias=post farir/post:1.0
+$ docker run -d --network=reddit --network-alias=comment farir/comment:1.0
+$ docker run -d --network=reddit -p 9292:9292 farir/ui:1.0
+```
+
+* Что было сделано
+
+1) Создана bridge-сеть для контейнеров, так как сетевые алиасы не работают в сети по умолчанию
+2) Запущены контейнеры в этой сети
+3) Добавлены сетевые алиасы контейнерам
+
+* Для запуска приложения с другими сетевыми алиасами необходимо задать новые переменные для контейнеров
+```editorconfig
+$ docker run -d --network=reddit --network-alias=post_db_new --network-alias=comment_db_new mongo:latest
+$ docker run -e POST_DATABASE_HOST=post_db_new -d --network=reddit --network-alias=post_new farir/post:1.0
+$ docker run -e COMMENT_DATABASE_HOST=comment_db_new -d --network=reddit --network-alias=comment_new farir/comment:1.0
+$ docker run -e POST_SERVICE_HOST=post_new -e COMMENT_SERVICE_HOST=comment_new -d --network=reddit -p 9292:9292 farir/ui:1.0
+```
+
+#### Оптимизировать сборку образа
+
+* Размер образа ui
+```editorconfig
+REPOSITORY      TAG             IMAGE ID       CREATED       SIZE
+farir/ui        1.0             2c014279b024   2 days ago    771MB
+```
+
+* Сервис `ui`
+```dockerfile
+FROM ubuntu:16.04
+RUN apt-get update \
+    && apt-get install -y ruby-full ruby-dev build-essential \
+    && gem install bundler --no-ri --no-rdoc
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+
+WORKDIR $APP_HOME
+ADD Gemfile* $APP_HOME/
+RUN bundle install
+ADD . $APP_HOME
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+* Размер образа `ui`
+```editorconfig
+REPOSITORY      TAG             IMAGE ID       CREATED          SIZE
+farir/ui        2.0             af883ae457e3   43 seconds ago   462MB
+```
+
+#### Создать docker-volume для хранения данных в бд
+
+После пересоздания контейнера mongodb его RW слой пересоздался, поэтому ранее сохранённые данные были удалены.
+Что бы избежать потерю данных при пересоздании контейнера нужно использовать docker-volumes
+
+* Создать том для mongodb
+```editorconfig
+$ docker volume create reddit_db
+```
+
+* Подключить том к контейнеру с mongodb
+```editorconfig
+$ docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db -v reddit_db:/data/db mongo:latest
+```
+
+#### Дополнительное задание: Сборка образа на основе Alpine Linux
+
+Для сборки используется файл `/ui/Dockerfile.alpine`
+```dockerfile
+FROM alpine:3.14
+
+RUN apk --update add --no-cache ruby-full ruby-dev build-base \
+    && gem install bundler -v 1.17.2 --no-document
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+
+WORKDIR $APP_HOME
+COPY Gemfile* $APP_HOME/
+RUN bundle install
+COPY . $APP_HOME
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+* Сборка нового образа
+```editorconfig
+$ docker build -t farir/ui:3.0 ui/ --file ui/Dockerfile.alpine
+```
+
+* Размер нового образа
+```editorconfig
+REPOSITORY      TAG             IMAGE ID       CREATED              SIZE
+farir/ui        3.0             50a8d847f1c8   5 seconds ago        265MB
+```
+
+* Завершение
+
+Удалить docker-machine
+```editorconfig
+$ docker-machine rm docker-host
+```
+
+Удалить yc instance
+```editorconfig
+$ yc compute instance delete docker-host
 ```
 
 </details>
