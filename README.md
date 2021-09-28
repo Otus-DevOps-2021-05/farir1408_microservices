@@ -1,7 +1,7 @@
 # farir1408_microservices
 farir1408 microservices repository
 
-## HW-13 (Lecture 17)
+## HW-12 (Lecture 16)
 #### branch: `docker-2`
 - [X] Работа с базовыми понятиями в docker
 - [X] Docker в yandex-cloud
@@ -256,7 +256,7 @@ $ docker - eval $(docker-machine env --unset)
 
 </details>
 
-## HW-14 (Lecture 18)
+## HW-13 (Lecture 17)
 #### branch: `docker-3`
 - [X] Разбить приложение на несколько компонентов
 - [X] Запустить микросервисное приложение
@@ -531,6 +531,308 @@ $ docker-machine rm docker-host
 Удалить yc instance
 ```editorconfig
 $ yc compute instance delete docker-host
+```
+
+</details>
+
+
+## HW-14 (Lecture 18)
+#### branch: `docker-4`
+- [X] Работа с сетями в Docker
+- [X] Использование docker-compose
+- [ ] Дополнительное задание: Сборка образа на основе Alpine Linux
+
+<details><summary>Решение</summary>
+
+#### Работа с сетями в Docker
+
+* None драйвер
+
+Образ `joffotron/docker-net-tools` содержит в себе все нужные утилиты для работы с сетью
+```editorconfig
+$ docker run -ti --rm --network none joffotron/docker-net-tools -c ifconfig
+```
+Результат выполнения:
+```editorconfig
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+
+Как видно из результата в контейнере присутствует только loopback интерфейс,
+который доступен только внутри контейнера, но нет связи с внешним миром.
+
+* Host драйвер
+
+Запустим контейнер в сетевом пространстве хоста
+```editorconfig
+$ docker run -ti --rm --network host joffotron/docker-net-tools -c ifconfig
+```
+
+Вывод команды идентичен выводу команды `docker-machine ssh docker-host ipconfig`
+```editorconfig
+docker0   Link encap:Ethernet  HWaddr 02:42:98:E7:AE:C5  
+          inet addr:172.17.0.1  Bcast:172.17.255.255  Mask:255.255.0.0
+          UP BROADCAST MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:0 
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+eth0      Link encap:Ethernet  HWaddr D0:0D:17:54:31:FD  
+          inet addr:10.128.0.24  Bcast:10.128.0.255  Mask:255.255.255.0
+          inet6 addr: fe80::d20d:17ff:fe54:31fd%32720/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+          RX packets:226842 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:194559 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:136399573 (130.0 MiB)  TX bytes:18613227 (17.7 MiB)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1%32720/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:290 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:290 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:26494 (25.8 KiB)  TX bytes:26494 (25.8 KiB)
+```
+
+* Используя docker host network запустить несколько контейнеров
+
+Запуск 3 раза
+```editorconfig
+$ docker run --network host -d nginx
+```
+
+Результат
+```editorconfig
+CONTAINER ID   IMAGE     COMMAND                  CREATED          STATUS                      PORTS     NAMES
+3f15820bb7b7   nginx     "/docker-entrypoint.…"   16 seconds ago   Exited (1) 13 seconds ago             xenodochial_dijkstra
+236cb5e044f8   nginx     "/docker-entrypoint.…"   22 seconds ago   Exited (1) 19 seconds ago             determined_shamir
+377c172161c6   nginx     "/docker-entrypoint.…"   34 seconds ago   Up 31 seconds                         wonderful_mendel
+```
+
+Запущен только первый контейнер. Посмотрим логи 2х других контейнеров.
+```editorconfig
+...
+ 2021/09/24 11:00:02 [emerg] 1#1: bind() to [::]:80 failed (98: Address already in use)
+nginx: [emerg] bind() to [::]:80 failed (98: Address already in use)
+2021/09/24 11:00:02 [notice] 1#1: try again to bind() after 500ms
+2021/09/24 11:00:02 [emerg] 1#1: still could not bind()
+nginx: [emerg] still could not bind()
+```
+
+Так как используется host сеть, то контейнеры разделяют друг с другом одно пространство сети включая порты.
+Первый контейнер успешно занял нужны адрес и порт, остальные контейнеры уже не могут занять тот же адрес и порт.
+
+Остановить все запущенные контейнеры
+```editorconfig
+$ docker kill $(docker ps -q)
+```
+
+* Docker networks
+
+Выполнить команду на докер-хосте
+```editorconfig
+$ sudo ln -s /var/run/docker/netns /var/run/netns
+```
+
+Просмотреть список net неймспейсов
+```editorconfig
+sudo ip netns
+```
+
+* Bridge драйвер
+
+По умолчанию используется драйвер bridge, указывать флаг `--driver` не обязательно
+
+Создать сеть
+```editorconfig
+$ docker network create reddit --driver bridge
+```
+
+Запустить проект используя новую сеть. Так как контейнеры ссылаются друг на друга,
+то необходимо задать имена контейнерам, чтобы внутренний dns смог корректно определить ip адреса.
+```editorconfig
+$ docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+$ docker run -d --network=reddit --network-alias=post farir/post:1.0
+$ docker run -d --network=reddit --network-alias=comment farir/comment:1.0
+$ docker run -d --network=reddit -p 9292:9292 farir/ui:1.0
+```
+
+Если образы были не найдены, выполнить билд и пуш в docker-hub
+```editorconfig
+$ docker build -t farir/post:1.0 ./post-py
+$ docker push farir/post:1.0
+```
+
+* Разделить приложение на 2 сети, чтобы ui не имел доступа к mongodb
+
+Создать 2 сети
+```editorconfig
+$ docker network create back_net --subnet=10.0.2.0/24
+$ docker network create front_net --subnet=10.0.1.0/24
+
+$ docker network ls
+NETWORK ID     NAME        DRIVER    SCOPE
+f4a3545b18aa   back_net    bridge    local
+4ec7af75507e   bridge      bridge    local
+```
+
+Запустить контейнеры в новых сетях
+```editorconfig
+$ docker run -d --network=front_net -p 9292:9292 --name ui farir/ui:1.0
+$ docker run -d --network=back_net --name comment farir/comment:1.0
+$ docker run -d --network=back_net --name post farir/post:1.0
+$ docker run -d --network=back_net --name mongo_db \
+    --network-alias=post_db --network-alias=comment_db mongo:latest
+```
+
+Ошибка работы приложения связана с тем, что docker при инициализации контейнера может подключить к нему только одну сеть
+При этом контейнеры из соседних сетей не будут доступны как в DNS, так и для взаимодействия по сети.
+Подключить дополнительные сети
+```editorconfig
+$ docker network connect front_net post
+$ docker network connect front_net comment
+```
+
+* Сетевой стек docker-host
+
+Установить на docker-host утилиту `bridge-utils`
+```editorconfig
+$ sudo apt-get update && sudo apt-get install bridge-utils
+```
+
+Идентификаторы сетей
+```editorconfig
+$ docker network ls
+NETWORK ID     NAME        DRIVER    SCOPE
+f4a3545b18aa   back_net    bridge    local
+c2d0c4784012   front_net   bridge    local
+```
+
+Описание сетевых интерфейсов docker-host
+```editorconfig
+$ ifconfig | grep br
+br-5589e761af5d: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        inet 172.18.0.1  netmask 255.255.0.0  broadcast 172.18.255.255
+br-c2d0c4784012: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 10.0.1.1  netmask 255.255.255.0  broadcast 10.0.1.255
+br-f4a3545b18aa: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 10.0.2.1  netmask 255.255.255.0  broadcast 10.0.2.255
+        inet 172.17.0.1  netmask 255.255.0.0  broadcast 172.17.255.255
+        inet 10.128.0.24  netmask 255.255.255.0  broadcast 10.128.0.255
+
+$ brctl show br-f4a3545b18aa
+bridge name     bridge id               STP enabled     interfaces
+br-f4a3545b18aa         8000.024266afe2ec       no              veth9c309ee
+                                                                vetha5c5cc4
+                                                                vethc7d5e0e
+```
+
+Список правил ip-tables
+```editorconfig
+$ sudo iptables -nL -t nat
+...
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination         
+MASQUERADE  all  --  10.0.1.0/24          0.0.0.0/0           
+MASQUERADE  all  --  10.0.2.0/24          0.0.0.0/0           
+MASQUERADE  all  --  172.18.0.0/16        0.0.0.0/0           
+MASQUERADE  all  --  172.17.0.0/16        0.0.0.0/0           
+MASQUERADE  tcp  --  10.0.1.2             10.0.1.2             tcp dpt:9292
+...
+```
+
+Цепочка `POSTROUTING` отвечает за выпуск трафика во внешнюю сеть из bridge сети
+
+Публикация порта контейнера в ip-tables
+```editorconfig
+DNAT       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:9292 to:10.0.1.2:9292
+```
+
+```editorconfig
+$ ps ax | grep docker-proxy
+28974 ?        Sl     0:02 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 9292 -container-ip 10.0.1.2 -container-port 9292
+28981 ?        Sl     0:02 /usr/bin/docker-proxy -proto tcp -host-ip :: -host-port 9292 -container-ip 10.0.1.2 -container-port 9292
+```
+
+Видно, что оба процесс слушают порт 9292 (для IPv4 и IPv6) и перенаправляют трафик в контейнер.
+
+#### Использование docker-compose
+
+* Проблемы 
+  
+1) Одно приложение состоит из множества контейнеров/сервисов 
+2) Один контейнер зависит от другого
+3) Порядок запуска имеет значение
+4) docker build/run/create … (долго и много)
+
+* Установить [docker-compose](https://docs.docker.com/compose/install/)
+```editorconfig
+$ docker-compose --version
+docker-compose version 1.27.4, build 40524192
+```
+
+* Описать инфраструктуру в файле docker-compose.yml
+```dockerfile
+version: '3.3'
+services:
+  post_db:
+    image: mongo:3.2
+    volumes:
+      - post_db:/data/db
+    networks:
+      - reddit
+  ui:
+    build: ./ui
+    image: ${USERNAME}/ui:1.0
+    ports:
+      - 9292:9292/tcp
+    networks:
+      - reddit
+  post:
+    build: ./post-py
+    image: ${USERNAME}/post:1.0
+    networks:
+      - reddit
+  comment:
+    build: ./comment
+    image: ${USERNAME}/comment:1.0
+    networks:
+      - reddit
+
+volumes:
+  post_db:
+
+networks:
+  reddit:
+```
+
+Запустить сборку docker-compose
+```editorconfig
+$ export USERNAME=farir
+
+$ docker-compose up -d
+...
+ 
+$ docker-compose ps
+Name                  Command             State                    Ports
+----------------------------------------------------------------------------------------------
+src_comment_1   puma                          Up
+src_post_1      python3 post_app.py           Up
+src_post_db_1   docker-entrypoint.sh mongod   Up      27017/tcp
+src_ui_1        puma                          Up      0.0.0.0:9292->9292/tcp,:::9292->9292/tcp
+```
+
+* Изменить базовое имя проекта
+```editorconfig
+$ docker-compose -p <project_prefix> up -d
 ```
 
 </details>
